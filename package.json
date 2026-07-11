@@ -1,0 +1,20 @@
+{
+  "name": "soksak-kit-terminal-common",
+  "version": "0.0.1",
+  "description": "Shared terminal shell logic for soksak terminal plugins (xterm / ghostty): WebKit IME addon, renderer-agnostic contracts.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ime-webkit": "./src/ime-webkit.ts"
+  },
+  "repository": "github:soksak-ai/soksak-kit-terminal-common",
+  "license": "MIT",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0",
+    "jsdom": "^25.0.0"
+  }
+}
