@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { registerTerminalCommands } from "./commands";
+import { describe, it, expect, vi } from "vitest";
+import { registerTerminalCommands, registerSplitPaneCommand } from "./commands";
 import { createTerminalRegistry } from "./terminal-registry";
 import type { TerminalRenderer } from "./terminal-renderer";
+import type { PaneSplitHost } from "./pane-split";
 
 // 최소 렌더러 — 명령 핸들러는 element 를 만지지 않으므로 캐스트로 둔다(DOM 불요).
 function fakeRenderer(tag: string) {
@@ -91,6 +92,35 @@ describe("registerTerminalCommands — view addressing rule", () => {
     const { ctx, registered } = fakeCtx();
     registerTerminalCommands(ctx, createTerminalRegistry());
     expect(registered.get("send")!.handler({ text: "x" })).toMatchObject({
+      ok: false,
+      code: "NO_TARGET",
+    });
+  });
+});
+
+describe("registerSplitPaneCommand", () => {
+  it("resolves the host, maps dir → row/col, returns the new paneId", async () => {
+    const split = vi.fn(async (dir: "row" | "col") => `p-${dir}`);
+    const host = { split } as unknown as PaneSplitHost;
+    const { ctx, registered } = fakeCtx();
+    registerSplitPaneCommand(ctx, (view) => (view === "vX" || !view ? { viewId: "vX", host } : null));
+
+    // dir 기본 = right → row
+    expect(await registered.get("split-pane")!.handler({ view: "vX" })).toMatchObject({
+      ok: true,
+      viewId: "vX",
+      paneId: "p-row",
+    });
+    expect(split).toHaveBeenLastCalledWith("row");
+    // down → col
+    await registered.get("split-pane")!.handler({ view: "vX", dir: "down" });
+    expect(split).toHaveBeenLastCalledWith("col");
+  });
+
+  it("returns NO_TARGET when no within-tab host resolves", async () => {
+    const { ctx, registered } = fakeCtx();
+    registerSplitPaneCommand(ctx, () => null);
+    expect(await registered.get("split-pane")!.handler({ view: "nope" })).toMatchObject({
       ok: false,
       code: "NO_TARGET",
     });

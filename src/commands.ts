@@ -2,6 +2,7 @@
 // ping(플러그인 정체성)·perf(렌더러별 계측)는 여기 없다 — 각 플러그인이 소유한다.
 import type { PluginContext } from "./host-contract";
 import type { TerminalRegistry } from "./terminal-registry";
+import type { PaneSplitHost } from "./pane-split";
 
 // claude 세션 id — RFC4122 UUID 화이트리스트(코어 ai_session::is_valid_session_id 와 동일 표준).
 // PTY 로 들어가는 위험 작업이라 양쪽 게이트(defense-in-depth). UUID 엔 특수문자가 없어 셸 injection 0.
@@ -84,6 +85,42 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
         // 셸 프롬프트에 `claude --resume <uuid>` 입력+실행. UUID 라 shell injection 0. claude 고정.
         entry.renderer.sendInput(`claude --resume ${sid}\r`);
         return { ok: true, session: sid, viewId: entry.viewId };
+      },
+    }),
+  );
+}
+
+// split-pane 명령 — 뷰 내부를 pane 으로 쪼갠다(탭내 분할, splitMode=within-tab 인 뷰만 대상). 두
+// 플러그인이 같은 명령을 쓰므로 kit 이 명령 모양·i18n 을 소유하고, 대상 호스트 해소만 플러그인이
+// 넘긴다(resolveHost: view 지정 시 그 뷰의 split 호스트, 없으면 첫 within-tab 뷰).
+export function registerSplitPaneCommand(
+  ctx: PluginContext,
+  resolveHost: (view: string | undefined) => { viewId: string; host: PaneSplitHost } | null,
+): void {
+  const app = ctx.app;
+  if (!app.commands) return;
+  ctx.subscriptions.push(
+    app.commands.register("split-pane", {
+      description:
+        "Split the terminal view into an internal pane (within-tab split; requires splitMode=within-tab).",
+      triggers: { ko: "터미널 탭내 분할 나누기" },
+      params: {
+        view: { type: "string", description: "Target view id (omit = first within-tab view)" },
+        dir: { type: "string", description: "'right' (default) or 'down'" },
+      },
+      returns: "{ ok, viewId?, paneId? }",
+      message: (d) => (d.ok ? `pane ${d.paneId} 을 분할했습니다.` : "분할 대상 없음"),
+      handler: async (p) => {
+        const target = resolveHost(typeof p.view === "string" && p.view ? p.view : undefined);
+        if (!target) {
+          return {
+            ok: false,
+            code: "NO_TARGET",
+            message: "no within-tab split host (set splitMode=within-tab)",
+          };
+        }
+        const paneId = await target.host.split(p.dir === "down" ? "col" : "row");
+        return { ok: true, viewId: target.viewId, paneId };
       },
     }),
   );
