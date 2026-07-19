@@ -1,0 +1,170 @@
+// 탭내 분할 런타임 — 한 터미널 뷰 컨테이너 안에서 PaneTree 를 명령형 DOM(중첩 flex + 드래그
+// divider)으로 렌더하고, pane 마다 렌더러를 factory 로 만든다(multi-pty). 트리가 바뀌어도 렌더러
+// 를 재생성하지 않고 host div 를 옮겨(appendChild) 세션을 보존한다. 렌더링·PTY 는 여기, 순수
+// 트리 대수는 pane-split-tree.ts. 코어 program-무지 유지 — 이 호스트는 플러그인 안에서 돈다.
+import type { TerminalRenderer } from "./terminal-renderer";
+import {
+  type PaneTree,
+  leaf,
+  panesOf,
+  splitPane,
+  removePane,
+  resizeSplit,
+} from "./pane-split-tree";
+
+const DIVIDER_PX = 5;
+const MIN_FRAC = 0.05;
+
+export interface PaneSplitHost {
+  /** 활성 pane 을 dir 방향으로 쪼갠다(after=우/하). 새 pane id 반환. */
+  split(dir: "row" | "col"): Promise<string>;
+  /** pane 을 닫는다. 마지막 pane 이면 onEmpty 를 부른다(뷰 전체 닫힘). */
+  close(paneId: string): Promise<void>;
+  /** 활성(포커스) pane. 명령 대상 해소용. */
+  active(): { paneId: string; renderer: TerminalRenderer } | null;
+  /** 모든 pane(등록 순). */
+  entries(): Array<[string, TerminalRenderer]>;
+  dispose(): Promise<void>;
+}
+
+export interface PaneSplitOptions {
+  container: HTMLElement;
+  /** pane 마다 렌더러 생성(플러그인이 자기 factory 로). paneId 는 호스트가 발급 — 각자 고유 PTY. */
+  createRenderer: (paneId: string) => Promise<TerminalRenderer>;
+  /** 고유 pane id 발급기(예: `${viewId}~${seq}`). */
+  mintPaneId: () => string;
+  /** 마지막 pane 이 닫혀 뷰가 비면 알린다. */
+  onEmpty?: () => void;
+}
+
+export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneSplitHost> {
+  const { container, createRenderer, mintPaneId, onEmpty } = opts;
+  const hosts = new Map<string, { renderer: TerminalRenderer; host: HTMLElement }>();
+  let tree: PaneTree;
+  let activePane = "";
+
+  const wrapHost = (paneId: string, r: TerminalRenderer): HTMLElement => {
+    const h = document.createElement("div");
+    h.style.cssText =
+      "position:relative;overflow:hidden;min-width:0;min-height:0;width:100%;height:100%";
+    h.appendChild(r.element);
+    // 이 pane 에 포커스가 들어오면 활성 pane 으로. 명령 대상·시각 표시의 단일 사실.
+    h.addEventListener("focusin", () => (activePane = paneId), true);
+    return h;
+  };
+
+  // 렌더 — 트리를 flex DOM 으로. leaf 는 보존된 host div, split 은 flex 그룹 + 사이 divider.
+  const renderNode = (node: PaneTree): HTMLElement => {
+    if (node.type === "leaf") return hosts.get(node.pane)!.host;
+    const group = document.createElement("div");
+    const horizontal = node.dir === "row";
+    group.style.cssText = `display:flex;flex-direction:${horizontal ? "row" : "column"};width:100%;height:100%;min-width:0;min-height:0`;
+    const childEls: HTMLElement[] = [];
+    node.children.forEach((child, i) => {
+      if (i > 0) group.appendChild(makeDivider(node, i, group, childEls));
+      const el = renderNode(child);
+      el.style.flex = `${node.sizes[i]} 1 0`;
+      childEls.push(el);
+      group.appendChild(el);
+    });
+    return group;
+  };
+
+  const render = (): void => {
+    container.replaceChildren(renderNode(tree));
+    for (const { renderer } of hosts.values()) renderer.fit();
+  };
+
+  // divider 드래그 — gapIndex(=오른/아래 자식 인덱스) 양옆 자식의 비율을 조정한다. 드래그 중엔
+  // 두 자식의 flex 를 직접 갱신(재렌더 없음 → host div 안 움직임, 세션 안전), mouseup 에 트리 영속.
+  const makeDivider = (
+    node: Extract<PaneTree, { type: "split" }>,
+    gapIndex: number,
+    group: HTMLElement,
+    childEls: HTMLElement[],
+  ): HTMLElement => {
+    const horizontal = node.dir === "row";
+    const d = document.createElement("div");
+    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};background:var(--divider-color, rgba(128,128,128,0.25));z-index:1`;
+    d.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const rect = group.getBoundingClientRect();
+      const total = horizontal ? rect.width : rect.height;
+      if (total <= 0) return;
+      const start = horizontal ? e.clientX : e.clientY;
+      const a = gapIndex - 1;
+      const b = gapIndex;
+      const startA = node.sizes[a];
+      const startB = node.sizes[b];
+      const next = [...node.sizes];
+      const onMove = (ev: MouseEvent): void => {
+        const cur = horizontal ? ev.clientX : ev.clientY;
+        const df = (cur - start) / total;
+        const sa = startA + df;
+        const sb = startB - df;
+        if (sa < MIN_FRAC || sb < MIN_FRAC) return;
+        next[a] = sa;
+        next[b] = sb;
+        childEls[a].style.flex = `${sa} 1 0`;
+        childEls[b].style.flex = `${sb} 1 0`;
+      };
+      const onUp = (): void => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        tree = resizeSplit(tree, node.id, next); // 영속(불변)
+        for (const { renderer } of hosts.values()) renderer.fit();
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+    return d;
+  };
+
+  // ── 초기 pane ──
+  const first = mintPaneId();
+  const r0 = await createRenderer(first);
+  hosts.set(first, { renderer: r0, host: wrapHost(first, r0) });
+  tree = leaf(first);
+  activePane = first;
+  render();
+
+  let splitSeq = 0;
+  return {
+    async split(dir) {
+      const target = hosts.has(activePane) ? activePane : panesOf(tree)[0];
+      const paneId = mintPaneId();
+      const r = await createRenderer(paneId);
+      hosts.set(paneId, { renderer: r, host: wrapHost(paneId, r) });
+      tree = splitPane(tree, target, paneId, dir, "after", `sp-${splitSeq++}`);
+      activePane = paneId;
+      render();
+      return paneId;
+    },
+    async close(paneId) {
+      const entry = hosts.get(paneId);
+      if (!entry) return;
+      hosts.delete(paneId);
+      await entry.renderer.dispose().catch(() => {});
+      const next = removePane(tree, paneId);
+      if (!next) {
+        onEmpty?.();
+        return;
+      }
+      tree = next;
+      if (activePane === paneId) activePane = panesOf(tree)[0] ?? "";
+      render();
+    },
+    active() {
+      const e = hosts.get(activePane);
+      return e ? { paneId: activePane, renderer: e.renderer } : null;
+    },
+    entries() {
+      return [...hosts.entries()].map(([id, e]) => [id, e.renderer] as [string, TerminalRenderer]);
+    },
+    async dispose() {
+      for (const { renderer } of hosts.values()) await renderer.dispose().catch(() => {});
+      hosts.clear();
+      container.replaceChildren();
+    },
+  };
+}

@@ -56,3 +56,9 @@ export {
   removePane,
   resizeSplit,
 } from "./pane-split-tree";
+
+export {
+  type PaneSplitHost,
+  type PaneSplitOptions,
+  createPaneSplitHost,
+} from "./pane-split";
