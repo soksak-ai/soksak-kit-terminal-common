@@ -50,9 +50,31 @@ describe("createPaneSplitHost", () => {
     expect(container.querySelectorAll(".fake-term").length).toBe(1);
     expect(host.entries().map(([id]) => id)).toEqual(["p0"]);
     expect(host.active()?.paneId).toBe("p0");
-    // 단일 pane 은 활성 아웃라인 없음(탭 포커스로 충분).
-    const only = container.querySelector(".fake-term")!.parentElement as HTMLElement;
-    expect(only.style.outline).toBe("none");
+    // 단일 pane 은 활성 표시 없음(탭 포커스로 충분).
+    const overlay = container.querySelector<HTMLElement>("[data-pane-overlay]")!;
+    expect(overlay.style.borderColor).toBe("transparent");
+  });
+
+  it("clicking a pane moves the active indicator to it (mousedown, not just focusin)", async () => {
+    const { container, opts } = setup();
+    const host = await createPaneSplitHost(opts);
+    await host.split("row"); // p1 활성
+    const paneHosts = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")].map(
+      (o) => o.parentElement as HTMLElement,
+    );
+    // p0 host 를 mousedown — 활성이 p0 으로 이동해야 한다(focusin 이 안 와도).
+    const p0Host = container.querySelectorAll<HTMLElement>("[data-pane-overlay]")[0]
+      .parentElement as HTMLElement;
+    p0Host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(host.active()?.paneId).toBe("p0");
+    const activeOverlays = paneHosts
+      .map((h) => h.querySelector<HTMLElement>("[data-pane-overlay]")!)
+      .filter((o) => o.style.borderColor && o.style.borderColor !== "transparent");
+    expect(activeOverlays.length).toBe(1);
+    // 그 활성 오버레이는 p0 host 안에 있어야 한다.
+    expect(p0Host.querySelector<HTMLElement>("[data-pane-overlay]")!.style.borderColor).not.toBe(
+      "transparent",
+    );
   });
 
   it("split adds a pane, a flex group, and a divider between them", async () => {
@@ -68,10 +90,10 @@ describe("createPaneSplitHost", () => {
     // divider 는 기본 투명(마우스 오버 때만 하이라이트) — 항상 보이는 바 금지.
     expect((group.children[1] as HTMLElement).style.background).toBe("transparent");
     expect(host.active()?.paneId).toBe("p1"); // 새 pane 이 활성
-    // 활성 pane 표시 — 2개 이상일 때 정확히 하나(활성)만 아웃라인.
-    const hostDivs = [...container.querySelectorAll(".fake-term")].map((el) => el.parentElement as HTMLElement);
-    const outlined = hostDivs.filter((h) => h.style.outline && h.style.outline !== "none");
-    expect(outlined.length).toBe(1);
+    // 활성 pane 표시 — 2개 이상일 때 정확히 하나(활성)만 accent border 오버레이.
+    const overlays = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")];
+    const active = overlays.filter((o) => o.style.borderColor && o.style.borderColor !== "transparent");
+    expect(active.length).toBe(1);
   });
 
   it("close removes a pane and collapses back to a single pane", async () => {

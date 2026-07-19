@@ -48,28 +48,35 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
     h.style.cssText =
       "position:relative;overflow:hidden;min-width:0;min-height:0;width:100%;height:100%";
     h.appendChild(r.element);
-    // 이 pane 에 포커스가 들어오면 활성 pane 으로. 명령 대상·시각 표시의 단일 사실.
-    h.addEventListener(
-      "focusin",
-      () => {
-        activePane = paneId;
-        applyActiveStyle();
-      },
-      true,
-    );
+    // 활성 표시 오버레이 — 터미널 위(z-index)에 border 로 그린다. outline 은 canvas 에 가려 안
+    // 보이므로 오버레이가 확실하다. pointer-events:none 로 클릭은 터미널로 통과.
+    const overlay = document.createElement("div");
+    overlay.dataset.paneOverlay = "1";
+    overlay.style.cssText =
+      "position:absolute;inset:0;pointer-events:none;box-sizing:border-box;z-index:3;border:2px solid transparent;transition:border-color 0.1s";
+    h.appendChild(overlay);
+    // 활성 pane 추적 — focusin(키보드 포커스)만으로는 ghostty textarea 위치에 따라 host 까지
+    // 안 올 수 있어, mousedown(클릭)도 함께 잡는다. capture 단계(divider 는 host 밖이라 무관).
+    const activate = (): void => {
+      if (activePane === paneId) return;
+      activePane = paneId;
+      applyActiveStyle();
+    };
+    h.addEventListener("focusin", activate, true);
+    h.addEventListener("mousedown", activate, true);
     return h;
   };
 
-  // 활성 pane 표시 — pane 이 2개 이상일 때만 활성 pane 에 은은한 accent 아웃라인(inset). 단일
-  // pane 은 탭 포커스로 충분하므로 표시하지 않는다. tmux 의 활성-pane 테두리와 같은 역할.
+  // 활성 pane 표시 — pane 이 2개 이상일 때만 활성 pane 오버레이에 accent border. 단일 pane 은
+  // 탭 포커스로 충분하므로 표시하지 않는다. tmux 의 활성-pane 테두리와 같은 역할.
   function applyActiveStyle(): void {
     const multi = hosts.size > 1;
     for (const [id, { host }] of hosts) {
-      host.style.outline =
-        multi && id === activePane
-          ? "1px solid var(--pane-active-color, rgba(96,165,250,0.75))"
-          : "none";
-      host.style.outlineOffset = "-1px";
+      const overlay = host.querySelector<HTMLElement>("[data-pane-overlay]");
+      if (overlay) {
+        overlay.style.borderColor =
+          multi && id === activePane ? "var(--pane-active-color, rgba(96,165,250,0.9))" : "transparent";
+      }
     }
   }
 
