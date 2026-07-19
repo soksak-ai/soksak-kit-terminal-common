@@ -58,10 +58,13 @@ export {
   type PaneTree,
   leaf,
   panesOf,
+  isPaneTree,
   splitPane,
   removePane,
   resizeSplit,
 } from "./pane-split-tree";
+
+export { type PaneTreeStore, createPaneTreeStore } from "./pane-tree-store";
 
 export {
   type PaneSplitHost,

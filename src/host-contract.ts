@@ -145,8 +145,15 @@ export interface PluginApi {
       entry: { message: string; speak?: string } & Record<string, unknown>,
     ) => void;
   };
-  // app.data — 코어 영속 저장(records). 터미널이 명령 블록을 저장/복원·retention(R1~R5). "data" 권한 필요.
+  // app.data — 코어 영속 저장. records(명령 블록 R1~R5) + kv(단일 값, 예: 뷰의 분할 구조). ns 는 코어가
+  // 플러그인 id 로 강제, kv 는 앱 재시작·창 닫기 넘어 생존. "data" 권한 필요.
   data?: {
+    kv: {
+      get: (key: string) => Promise<unknown>;
+      set: (key: string, value: unknown) => Promise<void>;
+      delete: (key: string) => Promise<boolean>;
+      keys: (prefix?: string) => Promise<string[]>;
+    };
     define: (collection: string, opts: { indexes?: string[]; fts?: string[] }) => Promise<void>;
     put: (
       collection: string,

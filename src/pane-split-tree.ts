@@ -15,6 +15,26 @@ export function panesOf(node: PaneTree): string[] {
   return node.type === "leaf" ? [node.pane] : node.children.flatMap(panesOf);
 }
 
+// 외부에서 온 값(영속 kv 등)이 유효한 PaneTree 인지 — 손상·구버전 데이터를 복원에서 걸러낸다.
+export function isPaneTree(value: unknown): value is PaneTree {
+  if (!value || typeof value !== "object") return false;
+  const n = value as Record<string, unknown>;
+  if (n.type === "leaf") return typeof n.pane === "string" && n.pane.length > 0;
+  if (n.type === "split") {
+    return (
+      typeof n.id === "string" &&
+      (n.dir === "row" || n.dir === "col") &&
+      Array.isArray(n.sizes) &&
+      n.sizes.every((s) => typeof s === "number") &&
+      Array.isArray(n.children) &&
+      n.children.length >= 2 &&
+      n.sizes.length === n.children.length &&
+      n.children.every(isPaneTree)
+    );
+  }
+  return false;
+}
+
 // target pane 을 dir 방향으로 쪼개 newPane 을 side("after"=우/하, "before"=좌/상)에 넣는다.
 // splitId = 새(또는 재사용) split 노드 id. 이미 같은 dir 의 split 안이면 형제로 추가, 아니면 감싼다.
 export function splitPane(

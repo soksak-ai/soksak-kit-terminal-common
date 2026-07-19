@@ -3,6 +3,8 @@ import { describe, it, expect, vi } from "vitest";
 import { mountTerminalView } from "./mount-terminal-view";
 import { createTerminalRegistry } from "./terminal-registry";
 import { createFocusCoordinator } from "./focus-coordinator";
+import { leaf, panesOf, splitPane, type PaneTree } from "./pane-split-tree";
+import type { PaneTreeStore } from "./pane-tree-store";
 import type { TerminalRenderer } from "./terminal-renderer";
 
 function fakeRenderer(id: string): TerminalRenderer {
@@ -139,5 +141,50 @@ describe("mountTerminalView", () => {
     await flush();
     expect(r.dispose).toHaveBeenCalled();
     expect(registry.get("v1")).toBeUndefined();
+  });
+
+  it("within-tab: restores panes from the tree store and continues the mint seq", async () => {
+    const { app, ios } = fakeApp();
+    const mountRoot = document.createElement("div");
+    const registry = createTerminalRegistry();
+    const focus = createFocusCoordinator();
+    const created: string[] = [];
+    const saved: PaneTree[] = [];
+    // 저장돼 있던 2-pane 구조(리로드 전 상태).
+    const tree = splitPane(leaf("v1~0"), "v1~0", "v1~1", "row", "after", "s1");
+    const treeStore: PaneTreeStore = {
+      load: async () => tree,
+      save: (t) => void saved.push(t),
+      clear: () => {},
+    };
+    const handle = mountTerminalView(app, {
+      mountRoot,
+      viewId: "v1",
+      withinTab: true,
+      focus,
+      registry,
+      createRenderer: async (paneId) => {
+        created.push(paneId);
+        return fakeRenderer(paneId);
+      },
+      setStatus: vi.fn(),
+      emptyMessage: "empty",
+      treeStore,
+    });
+    await flush();
+    await flush(); // load(await) + createPaneSplitHost(await) 둘 다 드레인
+
+    // 복원 — 저장된 pane id 그대로 재구축(민팅 없음).
+    expect(created).toEqual(["v1~0", "v1~1"]);
+    expect(ios.get("v1~0")?.readBuffer()).toBe("v1~0");
+    expect(ios.get("v1~1")?.readBuffer()).toBe("v1~1");
+    expect(handle.splitHost).not.toBeNull();
+
+    // 새 split 은 복원 뒤 seq(v1~2)로 — 기존 id 와 충돌 없음.
+    const newId = await handle.splitHost!.split("row");
+    expect(newId).toBe("v1~2");
+    // onChange → save 로 갱신된 구조가 영속된다.
+    expect(saved.length).toBeGreaterThan(0);
+    expect(panesOf(saved.at(-1)!)).toContain("v1~2");
   });
 });

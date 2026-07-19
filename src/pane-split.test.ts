@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { createPaneSplitHost } from "./pane-split";
+import { leaf, panesOf, splitPane } from "./pane-split-tree";
 import type { TerminalRenderer } from "./terminal-renderer";
 
 function fakeRenderer(): TerminalRenderer {
@@ -121,5 +122,31 @@ describe("createPaneSplitHost", () => {
     expect(after).toBe(before); // 같은 렌더러 인스턴스 — 재생성 0
     expect(created).toEqual(["p0", "p1"]); // p0 은 한 번만 생성
     expect(container.querySelectorAll(".fake-term").length).toBe(2);
+  });
+
+  it("restore rebuilds the panes from a tree, preserving ids (no minting)", async () => {
+    const { container, opts, created } = setup();
+    const tree = splitPane(leaf("p-a"), "p-a", "p-b", "row", "after", "s1");
+    const host = await createPaneSplitHost({
+      ...opts,
+      mintPaneId: () => {
+        throw new Error("must not mint for restored panes");
+      },
+      restore: tree,
+    });
+    expect(created).toEqual(["p-a", "p-b"]); // 트리 순서로, id 보존
+    expect(host.entries().map(([id]) => id)).toEqual(["p-a", "p-b"]);
+    expect(host.snapshot()).toEqual(tree);
+    expect(container.querySelectorAll(".fake-term").length).toBe(2);
+  });
+
+  it("onChange fires the new tree on split and close (persistence hook)", async () => {
+    const { opts } = setup();
+    const trees: string[][] = [];
+    const host = await createPaneSplitHost({ ...opts, onChange: (t) => trees.push(panesOf(t)) });
+    const id = await host.split("row");
+    expect(trees.at(-1)).toEqual(["p0", id]); // split 직후 트리
+    await host.close(id);
+    expect(trees.at(-1)).toEqual(["p0"]); // close 직후(leaf 로 붕괴)
   });
 });

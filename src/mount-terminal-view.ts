@@ -9,6 +9,20 @@ import type { TerminalRegistry } from "./terminal-registry";
 import type { TerminalRenderer } from "./terminal-renderer";
 import { createPaneSplitHost, type PaneSplitHost } from "./pane-split";
 import { createActivePaneProxy } from "./active-pane-proxy";
+import { panesOf, type PaneTree } from "./pane-split-tree";
+import type { PaneTreeStore } from "./pane-tree-store";
+
+// 복원 트리의 pane(`${viewId}~n`) 뒤로 발급기 seq 를 맞춘다 — 새 split 이 기존 id 와 충돌하지 않게.
+function nextSeqAfter(viewId: string, tree: PaneTree): number {
+  const prefix = `${viewId}~`;
+  let max = -1;
+  for (const pane of panesOf(tree)) {
+    if (!pane.startsWith(prefix)) continue;
+    const n = Number(pane.slice(prefix.length));
+    if (Number.isInteger(n) && n > max) max = n;
+  }
+  return max + 1;
+}
 
 export interface MountTerminalViewOptions {
   /** 렌더러/pane 이 들어갈 루트. 플러그인이 필요하면 미리 래핑해 넘긴다(예: xterm 의 .sk-term-wrap). */
@@ -23,6 +37,8 @@ export interface MountTerminalViewOptions {
   setStatus: (status: { code: string; message?: string } | null) => void;
   /** 마지막 pane 이 닫혀 뷰가 비었을 때의 에러 메시지(플러그인 i18n). */
   emptyMessage: string;
+  /** 있으면 within-tab 분할 구조를 영속·복원한다(remount 넘어 pane 들을 되살린다). 없으면 매번 단일 pane. */
+  treeStore?: PaneTreeStore;
 }
 
 export interface TerminalViewHandle {
@@ -48,52 +64,58 @@ export function mountTerminalView(
   };
 
   if (withinTab) {
-    // 각 pane 은 자기 PTY(paneId=`${viewId}~n`). io/포커스/명령은 활성 pane 에 위임. 첫 pane 만 isFirst.
-    let seq = 0;
-    let first = true;
-    void createPaneSplitHost({
-      container: mountRoot,
-      mintPaneId: () => `${viewId}~${seq++}`,
-      createRenderer: async (paneId) => {
-        const r = await createRenderer(paneId, first);
-        first = false;
-        // pane 개별 주소화 — 이 pane 을 자기 paneId 로 코어 IO substrate 에 직접 등록한다(viewId→활성
-        // 프록시와 별개). 그래야 외부(teammate 등)가 활성 pane 과 무관하게 이 pane 을 겨냥해 읽고
-        // 쓴다. 해지는 pane dispose 에 합성 — pane 이 닫히면(host.close) 렌더러 dispose 가 IO 도 푼다.
-        const paneIo = app.pty?.registerIo?.(paneId, {
-          readBuffer: (lines) => r.readBuffer(lines),
-          sendInput: (data) => r.sendInput(data),
-        });
-        if (paneIo) {
-          const origDispose = r.dispose.bind(r);
-          r.dispose = async () => {
-            paneIo.dispose();
-            await origDispose();
-          };
-        }
-        return r;
-      },
-      onEmpty: () => setStatus({ code: "error", message: emptyMessage }),
-    })
-      .then((h) => {
-        if (state.disposed) {
-          void h.dispose();
-          return;
-        }
-        state.splitHost = h;
-        state.io =
-          app.pty?.registerIo?.(viewId, {
-            readBuffer: (lines) => h.active()?.renderer.readBuffer(lines) ?? "",
-            sendInput: (data) => h.active()?.renderer.sendInput(data),
-          }) ?? null;
-        focus.attach({
-          focus: () => h.active()?.renderer.focus(),
-          prepareFocusTransfer: () => h.active()?.renderer.prepareFocusTransfer(),
-        });
-        registry.set(viewId, createActivePaneProxy(h));
-        setStatus(null);
-      })
-      .catch(fail);
+    // 저장된 분할 구조가 있으면 그 pane 들을(id 보존) 되살린다. 발급기 seq 는 복원 트리 뒤로 맞추고,
+    // 복원 시엔 어떤 pane 도 isFirst 아님(initialCommand 재실행 안 함 — 세션 내용은 per-pane 복원 몫).
+    void (async () => {
+      const restore = opts.treeStore ? await opts.treeStore.load() : null;
+      let seq = restore ? nextSeqAfter(viewId, restore) : 0;
+      let first = !restore;
+      const h = await createPaneSplitHost({
+        container: mountRoot,
+        mintPaneId: () => `${viewId}~${seq++}`,
+        restore: restore ?? undefined,
+        onChange: (tree) => opts.treeStore?.save(tree),
+        createRenderer: async (paneId) => {
+          const r = await createRenderer(paneId, first);
+          first = false;
+          // pane 개별 주소화 — 이 pane 을 자기 paneId 로 코어 IO substrate 에 직접 등록한다(viewId→활성
+          // 프록시와 별개). 그래야 외부(teammate 등)가 활성 pane 과 무관하게 이 pane 을 겨냥해 읽고
+          // 쓴다. 해지는 pane dispose 에 합성 — pane 이 닫히면(host.close) 렌더러 dispose 가 IO 도 푼다.
+          const paneIo = app.pty?.registerIo?.(paneId, {
+            readBuffer: (lines) => r.readBuffer(lines),
+            sendInput: (data) => r.sendInput(data),
+          });
+          if (paneIo) {
+            const origDispose = r.dispose.bind(r);
+            r.dispose = async () => {
+              paneIo.dispose();
+              await origDispose();
+            };
+          }
+          return r;
+        },
+        onEmpty: () => {
+          opts.treeStore?.clear(); // 뷰가 비었다 — 스테일 구조 제거
+          setStatus({ code: "error", message: emptyMessage });
+        },
+      });
+      if (state.disposed) {
+        void h.dispose();
+        return;
+      }
+      state.splitHost = h;
+      state.io =
+        app.pty?.registerIo?.(viewId, {
+          readBuffer: (lines) => h.active()?.renderer.readBuffer(lines) ?? "",
+          sendInput: (data) => h.active()?.renderer.sendInput(data),
+        }) ?? null;
+      focus.attach({
+        focus: () => h.active()?.renderer.focus(),
+        prepareFocusTransfer: () => h.active()?.renderer.prepareFocusTransfer(),
+      });
+      registry.set(viewId, createActivePaneProxy(h));
+      setStatus(null);
+    })().catch(fail);
   } else {
     // 단일 렌더러 — 탭분할은 코어 panel.split 이 담당(기본 경로).
     void createRenderer(viewId, true)

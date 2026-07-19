@@ -25,6 +25,8 @@ export interface PaneSplitHost {
   active(): { paneId: string; renderer: TerminalRenderer } | null;
   /** 모든 pane(등록 순). */
   entries(): Array<[string, TerminalRenderer]>;
+  /** 현재 분할 구조(영속·복원용). pane id·방향·크기를 담은 순수 트리. */
+  snapshot(): PaneTree;
   dispose(): Promise<void>;
 }
 
@@ -36,13 +38,20 @@ export interface PaneSplitOptions {
   mintPaneId: () => string;
   /** 마지막 pane 이 닫혀 뷰가 비면 알린다. */
   onEmpty?: () => void;
+  /** 있으면 이 트리로 재구축한다(pane id 보존 → 각 pane 세션 내용은 per-pane 복원 경로가 되살린다).
+   *  단일 pane 뷰(leaf)면 초기 pane 하나로 마운트하는 것과 같다. mintPaneId 는 이 트리를 넘어선
+   *  새 split 에만 쓰이니, 발급기의 seq 는 호출자가 복원 트리 뒤로 맞춰 넘긴다. */
+  restore?: PaneTree;
+  /** 구조 변경(split/close/resize 확정)마다 현재 트리를 알린다 — 호출자가 영속한다. */
+  onChange?: (tree: PaneTree) => void;
 }
 
 export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneSplitHost> {
-  const { container, createRenderer, mintPaneId, onEmpty } = opts;
+  const { container, createRenderer, mintPaneId, onEmpty, restore, onChange } = opts;
   const hosts = new Map<string, { renderer: TerminalRenderer; host: HTMLElement }>();
   let tree: PaneTree;
   let activePane = "";
+  const emitChange = (): void => onChange?.(tree);
 
   const wrapHost = (paneId: string, r: TerminalRenderer): HTMLElement => {
     const h = document.createElement("div");
@@ -191,6 +200,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
         hl(hit.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 밴드 유지, 아니면 기본 선
         tree = resizeSplit(tree, node.id, next); // 트리 영속(다음 split/close·재렌더가 이 sizes 로)
         for (const { renderer } of hosts.values()) renderer.fit();
+        emitChange(); // 크기 확정 → 영속
       };
       window.addEventListener("mousemove", onMove, true);
       window.addEventListener("mouseup", onUp, true);
@@ -198,12 +208,22 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
     return d;
   };
 
-  // ── 초기 pane ──
-  const first = mintPaneId();
-  const r0 = await createRenderer(first);
-  hosts.set(first, { renderer: r0, host: wrapHost(first, r0) });
-  tree = leaf(first);
-  activePane = first;
+  // ── 초기 구성 ── 복원 트리가 있으면 그 pane 들을(id 보존) 재구축, 없으면 단일 pane 으로 시작한다.
+  const restorePanes = restore ? panesOf(restore) : [];
+  if (restore && restorePanes.length > 0) {
+    for (const paneId of restorePanes) {
+      const r = await createRenderer(paneId);
+      hosts.set(paneId, { renderer: r, host: wrapHost(paneId, r) });
+    }
+    tree = restore;
+    activePane = restorePanes[0];
+  } else {
+    const first = mintPaneId();
+    const r0 = await createRenderer(first);
+    hosts.set(first, { renderer: r0, host: wrapHost(first, r0) });
+    tree = leaf(first);
+    activePane = first;
+  }
   render();
 
   let splitSeq = 0;
@@ -216,6 +236,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       tree = splitPane(tree, target, paneId, dir, "after", `sp-${splitSeq++}`);
       activePane = paneId;
       render();
+      emitChange(); // 구조 변경 → 영속
       r.focus(); // 새 pane 을 포커스 — 활성 표시가 여기로, 입력도 여기로.
       return paneId;
     },
@@ -226,12 +247,13 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       await entry.renderer.dispose().catch(() => {});
       const next = removePane(tree, paneId);
       if (!next) {
-        onEmpty?.();
+        onEmpty?.(); // 마지막 pane — 뷰가 비었다(호출자가 영속을 지운다)
         return;
       }
       tree = next;
       if (activePane === paneId) activePane = panesOf(tree)[0] ?? "";
       render();
+      emitChange(); // 구조 변경 → 영속
     },
     active() {
       const e = hosts.get(activePane);
@@ -239,6 +261,9 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
     },
     entries() {
       return [...hosts.entries()].map(([id, e]) => [id, e.renderer] as [string, TerminalRenderer]);
+    },
+    snapshot() {
+      return tree;
     },
     async dispose() {
       for (const { renderer } of hosts.values()) await renderer.dispose().catch(() => {});
