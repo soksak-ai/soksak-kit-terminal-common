@@ -47,3 +47,12 @@ export { terminalStartedActivity, terminalFinishedActivity } from "./activity";
 
 export { type TerminalRegistry, createTerminalRegistry } from "./terminal-registry";
 export { registerTerminalCommands } from "./commands";
+
+export {
+  type PaneTree,
+  leaf,
+  panesOf,
+  splitPane,
+  removePane,
+  resizeSplit,
+} from "./pane-split-tree";
