@@ -42,3 +42,5 @@ export {
   type FocusCoordinator,
   createFocusCoordinator,
 } from "./focus-coordinator";
+
+export { terminalStartedActivity, terminalFinishedActivity } from "./activity";
