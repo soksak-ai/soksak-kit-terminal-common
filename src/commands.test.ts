@@ -117,6 +117,31 @@ describe("registerPaneCommands", () => {
     expect(split).toHaveBeenLastCalledWith("col");
   });
 
+  it("panes lists the view's panes and marks the active one", () => {
+    const host = {
+      split: vi.fn(),
+      close: vi.fn(),
+      active: () => ({ paneId: "v1~1", renderer: {} }),
+      entries: () => [
+        ["v1~0", {}],
+        ["v1~1", {}],
+      ],
+    } as unknown as PaneSplitHost;
+    const { ctx, registered } = fakeCtx();
+    registerPaneCommands(ctx, () => ({ viewId: "v1", host }));
+    const r = registered.get("panes")!.handler({ view: "v1" }) as {
+      ok: boolean;
+      viewId: string;
+      active: string;
+      panes: Array<{ paneId: string; active: boolean }>;
+    };
+    expect(r).toMatchObject({ ok: true, viewId: "v1", active: "v1~1" });
+    expect(r.panes).toEqual([
+      { paneId: "v1~0", active: false },
+      { paneId: "v1~1", active: true },
+    ]);
+  });
+
   it("close-pane closes the given paneId on the resolved host", async () => {
     const close = vi.fn(async () => {});
     const host = { split: vi.fn(), close } as unknown as PaneSplitHost;

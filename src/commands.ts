@@ -8,6 +8,11 @@ import type { PaneSplitHost } from "./pane-split";
 // PTY 로 들어가는 위험 작업이라 양쪽 게이트(defense-in-depth). UUID 엔 특수문자가 없어 셸 injection 0.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// 대상 뷰 파라미터 — 대상을 해소하는 모든 터미널 명령이 같은 규약으로 쓴다(지정 view, 없으면 첫 활성).
+const VIEW_PARAM = {
+  view: { type: "string" as const, description: "Target view id (omit = first active terminal)" },
+};
+
 export function registerTerminalCommands(ctx: PluginContext, registry: TerminalRegistry): void {
   const app = ctx.app;
   if (!app.commands) return;
@@ -19,10 +24,7 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
 
   // [규칙] 대상을 해소하는 모든 터미널 명령은 동일하게 registry.resolve(view) 로 해소한다 — view 지정
   // 시 그 뷰, 없으면 첫 활성. perf.* 와 send/clear/resume 이 같은 규칙을 지켜야 within-tab 위임
-  // 프록시(뷰 하나가 여러 pane)가 명령을 활성 pane 으로 일관되게 전달한다.
-  const VIEW_PARAM = {
-    view: { type: "string" as const, description: "Target view id (omit = first active terminal)" },
-  };
+  // 프록시(뷰 하나가 여러 pane)가 명령을 활성 pane 으로 일관되게 전달한다(VIEW_PARAM 은 모듈 상단).
 
   sub(
     app.commands.register("send", {
@@ -120,6 +122,25 @@ export function registerPaneCommands(
         if (!target) return noHost;
         const paneId = await target.host.split(p.dir === "down" ? "col" : "row");
         return { ok: true, viewId: target.viewId, paneId };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    app.commands.register("panes", {
+      // within-tab 뷰의 상태 노출 — 어떤 내부 pane 들이 있고 어느 게 활성인지(status 투명화). 각 pane 은
+      // ui.tree 로 개별 주소화되고 term.read/send {pane} 으로 겨냥된다 — 이 명령이 그 로스터를 준다.
+      description: "List the internal panes of a within-tab terminal view and which one is active.",
+      triggers: { ko: "터미널 탭내 pane 목록 상태" },
+      params: { ...VIEW_PARAM },
+      returns: "{ ok, viewId?, active?, panes?: [{ paneId, active }] }",
+      message: (d) => (d.panes ? `pane ${d.panes.length}개 (활성 ${d.active ?? "-"})` : "within-tab pane 없음"),
+      handler: (p) => {
+        const target = resolveHost(typeof p.view === "string" && p.view ? p.view : undefined);
+        if (!target) return noHost;
+        const active = target.host.active()?.paneId ?? null;
+        const panes = target.host.entries().map(([paneId]) => ({ paneId, active: paneId === active }));
+        return { ok: true, viewId: target.viewId, active, panes };
       },
     }),
   );

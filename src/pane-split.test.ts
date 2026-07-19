@@ -7,6 +7,7 @@ import type { TerminalRenderer } from "./terminal-renderer";
 function fakeRenderer(): TerminalRenderer {
   const element = document.createElement("div");
   element.className = "fake-term";
+  element.dataset.node = "term"; // 렌더러가 노출하는 노드(코어 scanNodes 대상) — 실제 xterm/ghostty 와 동형
   return {
     element,
     restorePainted: false,
@@ -148,5 +149,28 @@ describe("createPaneSplitHost", () => {
     expect(trees.at(-1)).toEqual(["p0", id]); // split 직후 트리
     await host.close(id);
     expect(trees.at(-1)).toEqual(["p0"]); // close 직후(leaf 로 붕괴)
+  });
+
+  it("scopes each pane's data-node by paneId so every pane is individually addressable", async () => {
+    const { container, opts } = setup();
+    const host = await createPaneSplitHost(opts);
+    await host.split("row"); // p0, p1
+    const nodes = [...container.querySelectorAll<HTMLElement>("[data-node]")]
+      .map((el) => el.dataset.node)
+      .filter((n) => n?.startsWith("term"));
+    // base("term")는 유지하고 paneId 세그먼트로 유일화 — 두 pane 다 노출(충돌로 하나 유실 없음).
+    expect(nodes).toContain("term/p0");
+    expect(nodes).toContain("term/p1");
+    expect(nodes).not.toContain("term"); // 충돌하는 원본 path 는 남지 않는다
+  });
+
+  it("sanitizes '~' in paneId to a NODE_PATH_RE-safe segment", async () => {
+    const { container, opts } = setup();
+    const host = await createPaneSplitHost({ ...opts, mintPaneId: () => "v9~3", restore: leaf("v9~3") });
+    void host;
+    const node = [...container.querySelectorAll<HTMLElement>("[data-node]")]
+      .map((el) => el.dataset.node)
+      .find((n) => n?.startsWith("term"));
+    expect(node).toBe("term/v9.3"); // `~` → `.`
   });
 });
