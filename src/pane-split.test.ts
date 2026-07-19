@@ -62,6 +62,8 @@ describe("createPaneSplitHost", () => {
     expect(group.style.flexDirection).toBe("row");
     // 자식 = host, divider, host (3)
     expect(group.children.length).toBe(3);
+    // divider 는 기본 투명(마우스 오버 때만 하이라이트) — 항상 보이는 바 금지.
+    expect((group.children[1] as HTMLElement).style.background).toBe("transparent");
     expect(host.active()?.paneId).toBe("p1"); // 새 pane 이 활성
   });
 

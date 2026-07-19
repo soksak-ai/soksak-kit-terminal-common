@@ -85,12 +85,26 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
   ): HTMLElement => {
     const horizontal = node.dir === "row";
     const d = document.createElement("div");
-    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};background:var(--divider-color, rgba(128,128,128,0.25));z-index:1`;
+    // 기본은 투명(보이지 않음) — 마우스 오버·드래그 때만 하이라이트한다. hit 영역은 유지(cursor 로 안내).
+    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};background:transparent;transition:background 0.12s;z-index:1`;
+    let dragging = false;
+    const hl = (on: boolean): void => {
+      d.style.background = on ? "var(--divider-hover-color, rgba(120,120,120,0.5))" : "transparent";
+    };
+    d.addEventListener("mouseenter", () => hl(true));
+    d.addEventListener("mouseleave", () => {
+      if (!dragging) hl(false);
+    });
     d.addEventListener("mousedown", (e) => {
       e.preventDefault();
+      dragging = true;
+      hl(true);
       const rect = group.getBoundingClientRect();
-      const total = horizontal ? rect.width : rect.height;
-      if (total <= 0) return;
+      // flex 비율은 divider 픽셀을 뺀 "가용 공간"을 나눈다 — 마우스 이동 픽셀을 이 가용 공간으로
+      // 환산해야 divider 가 포인터에 1:1 로 붙는다(그룹 전체로 나누면 느리게 움직여 이질감).
+      const dividerCount = node.children.length - 1;
+      const flexible = (horizontal ? rect.width : rect.height) - dividerCount * DIVIDER_PX;
+      if (flexible <= 0) return;
       const start = horizontal ? e.clientX : e.clientY;
       const a = gapIndex - 1;
       const b = gapIndex;
@@ -99,7 +113,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       const next = [...node.sizes];
       const onMove = (ev: MouseEvent): void => {
         const cur = horizontal ? ev.clientX : ev.clientY;
-        const df = (cur - start) / total;
+        const df = (cur - start) / flexible;
         const sa = startA + df;
         const sb = startB - df;
         if (sa < MIN_FRAC || sb < MIN_FRAC) return;
@@ -111,6 +125,8 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       const onUp = (): void => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        dragging = false;
+        hl(d.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 유지, 아니면 투명
         tree = resizeSplit(tree, node.id, next); // 영속(불변)
         for (const { renderer } of hosts.values()) renderer.fit();
       };
