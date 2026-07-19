@@ -32,6 +32,7 @@ export interface PerfSnapshot {
  * S = 이 렌더러의 설정 타입(TerminalSettings 확장). 기본은 공통 설정.
  */
 export interface TerminalRenderer<S extends TerminalSettings = TerminalSettings> {
+  // ── 핵심(양쪽 렌더러가 반드시 제공 — 공유 로직은 이 부분에만 의존한다) ──
   /** 이 렌더러의 마운트 루트. 분할 호스트가 pane div 로 이동/배치한다. */
   readonly element: HTMLElement;
   /** 마운트 시 복원 화면을 스스로 그렸는가(warm rehydrate | cold 봉인 페인트). true 면 명령-블록
@@ -43,17 +44,18 @@ export interface TerminalRenderer<S extends TerminalSettings = TerminalSettings>
   /** 컨테이너 크기에 맞춰 fit 후 PTY 에 크기 전파. */
   fit(): void;
   sendInput(data: string): void;
-  paste(text: string): void;
   readBuffer(lines?: number): string;
   /** PTY 우회 화면 write(복원 텍스트 등 inert, 재실행 0). */
   write(data: string): void;
   clear(): void;
-  /** 화면 페인트 일시중단(vault lock 중). true 여도 ACK 는 계속 보내 PTY 를 막지 않는다. */
-  setScreenSuspended(suspended: boolean): void;
-  applySettings(settings: S): void;
   dispose(): Promise<void>;
-  /** 선택 — 계측(perf.stats 명령이 노출). 지원하는 렌더러만 구현. */
+  // ── 선택(렌더러가 지원하면 구현 — 공유 로직은 여기 의존하지 않는다) ──
+  paste?(text: string): void;
+  /** 화면 페인트 일시중단(vault lock 중). true 여도 ACK 는 계속 보내 PTY 를 막지 않는다. */
+  setScreenSuspended?(suspended: boolean): void;
+  applySettings?(settings: S): void;
+  /** 계측(perf.stats 명령이 노출). */
   perfStats?(): PerfSnapshot;
-  /** 선택 — 입력→에코 왕복(ms) 1회 프로브(perf.echo 명령이 노출). */
+  /** 입력→에코 왕복(ms) 1회 프로브(perf.echo 명령이 노출). */
   echoProbe?(): Promise<number>;
 }
