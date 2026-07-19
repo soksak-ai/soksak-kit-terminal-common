@@ -49,9 +49,29 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       "position:relative;overflow:hidden;min-width:0;min-height:0;width:100%;height:100%";
     h.appendChild(r.element);
     // 이 pane 에 포커스가 들어오면 활성 pane 으로. 명령 대상·시각 표시의 단일 사실.
-    h.addEventListener("focusin", () => (activePane = paneId), true);
+    h.addEventListener(
+      "focusin",
+      () => {
+        activePane = paneId;
+        applyActiveStyle();
+      },
+      true,
+    );
     return h;
   };
+
+  // 활성 pane 표시 — pane 이 2개 이상일 때만 활성 pane 에 은은한 accent 아웃라인(inset). 단일
+  // pane 은 탭 포커스로 충분하므로 표시하지 않는다. tmux 의 활성-pane 테두리와 같은 역할.
+  function applyActiveStyle(): void {
+    const multi = hosts.size > 1;
+    for (const [id, { host }] of hosts) {
+      host.style.outline =
+        multi && id === activePane
+          ? "1px solid var(--pane-active-color, rgba(96,165,250,0.75))"
+          : "none";
+      host.style.outlineOffset = "-1px";
+    }
+  }
 
   // 렌더 — 트리를 flex DOM 으로. leaf 는 보존된 host div, split 은 flex 그룹 + 사이 divider.
   const renderNode = (node: PaneTree): HTMLElement => {
@@ -73,6 +93,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
   const render = (): void => {
     container.replaceChildren(renderNode(tree));
     for (const { renderer } of hosts.values()) renderer.fit();
+    applyActiveStyle();
   };
 
   // divider 드래그 — gapIndex(=오른/아래 자식 인덱스) 양옆 자식의 비율을 조정한다. 드래그 중엔
@@ -114,11 +135,19 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       const start = horizontal ? e.clientX : e.clientY;
       const a = gapIndex - 1;
       const b = gapIndex;
-      const startA = node.sizes[a];
-      const startB = node.sizes[b];
-      const next = [...node.sizes];
-      // 드래그 중 터미널 re-fit 을 rAF 로 throttle — 내용(canvas)이 divider 를 실시간으로 따라와야
-      // 이질감이 없다(mouseup 까지 미루면 내용이 stale 해 바만 움직이는 것처럼 보인다).
+      // baseline 은 트리 노드가 아니라 살아있는 DOM 의 현재 flex-grow 에서 읽는다 — 재렌더 없이도
+      // 연속 드래그의 기준이 항상 최신이라 두 번째 드래그가 튀지 않는다(stale baseline 방지).
+      const readGrow = (el: HTMLElement): number => parseFloat(el.style.flex) || 0;
+      const next = childEls.map(readGrow);
+      const startA = next[a];
+      const startB = next[b];
+      // 드래그 동안: pane 의 pointer-events 를 끊어 터미널(ghostty canvas)이 mousemove 를 먹지 않게
+      // 한다 — 안 그러면 마우스가 pane 위를 지날 때 divider 갱신이 끊겨 포인터와 어긋난다. 텍스트
+      // 선택도 차단. window 리스너는 capture 단계로 어떤 자식(캔버스)보다 먼저 받는다.
+      const prevUserSelect = document.body.style.userSelect;
+      document.body.style.userSelect = "none";
+      for (const { host } of hosts.values()) host.style.pointerEvents = "none";
+      // 드래그 중 터미널 re-fit 을 rAF 로 throttle — 내용(canvas)이 divider 를 실시간으로 따라온다.
       let fitRaf = 0;
       const scheduleFit = (): void => {
         if (fitRaf) return;
@@ -140,16 +169,18 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
         scheduleFit();
       };
       const onUp = (): void => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
+        window.removeEventListener("mousemove", onMove, true);
+        window.removeEventListener("mouseup", onUp, true);
         if (fitRaf) cancelAnimationFrame(fitRaf);
+        document.body.style.userSelect = prevUserSelect;
+        for (const { host } of hosts.values()) host.style.pointerEvents = "";
         dragging = false;
         hl(d.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 유지, 아니면 투명
-        tree = resizeSplit(tree, node.id, next); // 영속(불변)
+        tree = resizeSplit(tree, node.id, next); // 트리 영속(다음 split/close·재렌더가 이 sizes 로)
         for (const { renderer } of hosts.values()) renderer.fit();
       };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      window.addEventListener("mousemove", onMove, true);
+      window.addEventListener("mouseup", onUp, true);
     });
     return d;
   };
@@ -172,6 +203,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       tree = splitPane(tree, target, paneId, dir, "after", `sp-${splitSeq++}`);
       activePane = paneId;
       render();
+      r.focus(); // 새 pane 을 포커스 — 활성 표시가 여기로, 입력도 여기로.
       return paneId;
     },
     async close(paneId) {
