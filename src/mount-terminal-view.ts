@@ -57,6 +57,20 @@ export function mountTerminalView(
       createRenderer: async (paneId) => {
         const r = await createRenderer(paneId, first);
         first = false;
+        // pane 개별 주소화 — 이 pane 을 자기 paneId 로 코어 IO substrate 에 직접 등록한다(viewId→활성
+        // 프록시와 별개). 그래야 외부(teammate 등)가 활성 pane 과 무관하게 이 pane 을 겨냥해 읽고
+        // 쓴다. 해지는 pane dispose 에 합성 — pane 이 닫히면(host.close) 렌더러 dispose 가 IO 도 푼다.
+        const paneIo = app.pty?.registerIo?.(paneId, {
+          readBuffer: (lines) => r.readBuffer(lines),
+          sendInput: (data) => r.sendInput(data),
+        });
+        if (paneIo) {
+          const origDispose = r.dispose.bind(r);
+          r.dispose = async () => {
+            paneIo.dispose();
+            await origDispose();
+          };
+        }
         return r;
       },
       onEmpty: () => setStatus({ code: "error", message: emptyMessage }),

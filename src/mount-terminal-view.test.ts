@@ -23,21 +23,16 @@ function fakeRenderer(id: string): TerminalRenderer {
 }
 
 function fakeApp() {
-  const ios: Array<{ viewId: string; handlers: { readBuffer: (n?: number) => string; sendInput: (d: string) => void } }> = [];
+  // 코어 IO substrate 모사 — key(viewId 또는 paneId)로 핸들을 담는다. term.read/term.send 가 key 로 해소.
+  const ios = new Map<string, { readBuffer: (n?: number) => string; sendInput: (d: string) => void }>();
   const app = {
     pty: {
       registerIo: (
-        viewId: string,
+        key: string,
         handlers: { readBuffer: (n?: number) => string; sendInput: (d: string) => void },
       ) => {
-        const rec = { viewId, handlers };
-        ios.push(rec);
-        return {
-          dispose: () => {
-            const i = ios.indexOf(rec);
-            if (i >= 0) ios.splice(i, 1);
-          },
-        };
+        ios.set(key, handlers);
+        return { dispose: () => void ios.delete(key) };
       },
     },
   } as unknown as import("./host-contract").PluginApi;
@@ -72,12 +67,11 @@ describe("mountTerminalView", () => {
     expect(mountRoot.querySelector('[data-pane="v1"]')).toBeTruthy();
     expect(handle.splitHost).toBeNull();
     expect(registry.get("v1")?.readBuffer()).toBe("v1");
-    expect(ios[0]?.viewId).toBe("v1");
-    expect(ios[0]?.handlers.readBuffer()).toBe("v1");
+    expect(ios.get("v1")?.readBuffer()).toBe("v1");
 
     handle.dispose();
     expect(registry.get("v1")).toBeUndefined();
-    expect(ios).toHaveLength(0);
+    expect(ios.size).toBe(0);
   });
 
   it("within-tab: proxy + IO follow the active pane across a split", async () => {
@@ -105,19 +99,24 @@ describe("mountTerminalView", () => {
     expect(handle.splitHost).not.toBeNull();
     // 뷰 하나가 registry 에 프록시로 등록 — 활성 pane(v1~0)에 위임.
     expect(registry.get("v1")?.readBuffer()).toBe("v1~0");
-    expect(ios[0]?.viewId).toBe("v1");
-    expect(ios[0]?.handlers.readBuffer()).toBe("v1~0");
+    // 뷰 IO(viewId) = 활성 pane 위임.
+    expect(ios.get("v1")?.readBuffer()).toBe("v1~0");
+    // pane 개별 주소(paneId) = 그 pane 직접(활성 무관).
+    expect(ios.get("v1~0")?.readBuffer()).toBe("v1~0");
 
-    // 분할 → 새 pane 활성. 프록시·IO 는 재등록 없이 활성(v1~1)을 따라간다.
+    // 분할 → 새 pane 활성. 뷰 IO/프록시는 재등록 없이 활성(v1~1)을 따라가고, 각 pane 은 자기 id 로 유지.
     await handle.splitHost!.split("row");
     await flush();
     expect(created).toEqual(["v1~0", "v1~1"]);
-    expect(registry.get("v1")?.readBuffer()).toBe("v1~1");
-    expect(ios[0]?.handlers.readBuffer()).toBe("v1~1");
+    expect(registry.get("v1")?.readBuffer()).toBe("v1~1"); // 프록시 = 활성
+    expect(ios.get("v1")?.readBuffer()).toBe("v1~1"); // 뷰 IO = 활성
+    expect(ios.get("v1~0")?.readBuffer()).toBe("v1~0"); // pane 0 은 여전히 자기 것
+    expect(ios.get("v1~1")?.readBuffer()).toBe("v1~1"); // pane 1 개별 주소
 
     handle.dispose();
+    await flush(); // splitHost.dispose() 는 async — pane 렌더러 dispose(=pane IO 해지) 완료 대기
     expect(registry.get("v1")).toBeUndefined();
-    expect(ios).toHaveLength(0);
+    expect(ios.size).toBe(0); // 뷰 IO + 모든 pane IO 해지
   });
 
   it("disposing before the async renderer resolves still tears the renderer down", async () => {
