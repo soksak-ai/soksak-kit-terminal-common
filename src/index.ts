@@ -44,3 +44,6 @@ export {
 } from "./focus-coordinator";
 
 export { terminalStartedActivity, terminalFinishedActivity } from "./activity";
+
+export { type TerminalRegistry, createTerminalRegistry } from "./terminal-registry";
+export { registerTerminalCommands } from "./commands";
