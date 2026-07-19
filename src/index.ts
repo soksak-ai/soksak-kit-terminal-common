@@ -62,3 +62,5 @@ export {
   type PaneSplitOptions,
   createPaneSplitHost,
 } from "./pane-split";
+
+export { createActivePaneProxy } from "./active-pane-proxy";

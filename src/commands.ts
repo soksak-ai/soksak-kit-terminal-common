@@ -16,19 +16,27 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
       ? [{ cmd: `sok term.read '{"pane":"${d.viewId}"}'`, why }]
       : [];
 
+  // [규칙] 대상을 해소하는 모든 터미널 명령은 동일하게 registry.resolve(view) 로 해소한다 — view 지정
+  // 시 그 뷰, 없으면 첫 활성. perf.* 와 send/clear/resume 이 같은 규칙을 지켜야 within-tab 위임
+  // 프록시(뷰 하나가 여러 pane)가 명령을 활성 pane 으로 일관되게 전달한다.
+  const VIEW_PARAM = {
+    view: { type: "string" as const, description: "Target view id (omit = first active terminal)" },
+  };
+
   sub(
     app.commands.register("send", {
-      description: "Send text to the active terminal PTY.",
+      description: "Send text to a terminal PTY (target view, else the first active terminal).",
       triggers: { ko: "터미널 텍스트 전송 입력" },
       params: {
         text: { type: "string", description: "Text to send to the terminal", required: true },
+        ...VIEW_PARAM,
       },
       returns: "{ ok, viewId? }",
       message: () => "터미널에 텍스트를 전송했습니다.",
       // 전송은 즉시 돌아온다 — 출력은 잠시 후 그 터미널을 core term.read 로 확인한다(pane=이 viewId).
       hint: (d) => readHint(d, "잠시 후 이 터미널을 읽어 출력을 확인할 수 있습니다."),
       handler: (p) => {
-        const entry = registry.first();
+        const entry = registry.resolve(p.view);
         if (!entry) return { ok: false, code: "NO_TARGET", message: "no active terminal" };
         entry.renderer.sendInput(String(p.text ?? ""));
         return { ok: true, viewId: entry.viewId };
@@ -38,12 +46,13 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
 
   sub(
     app.commands.register("clear", {
-      description: "Clear the active terminal screen.",
+      description: "Clear a terminal screen (target view, else the first active terminal).",
       triggers: { ko: "터미널 지우기 클리어" },
+      params: { ...VIEW_PARAM },
       returns: "{ ok, viewId? }",
       message: () => "터미널 화면을 지웠습니다.",
-      handler: () => {
-        const entry = registry.first();
+      handler: (p) => {
+        const entry = registry.resolve(p.view);
         if (!entry) return { ok: false, code: "NO_TARGET", message: "no active terminal" };
         entry.renderer.clear();
         return { ok: true, viewId: entry.viewId };
@@ -56,10 +65,11 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
       // [R9] 복원된 블록의 claude 세션을 이어간다 — 사용자 명시 액션만(auto-trigger 0). sessionId 는
       // UUID 화이트리스트로 엄격 검증해 위조 history·셸 injection 을 차단한다.
       description:
-        "Resume a tracked claude session in the active terminal by its sessionId. User-initiated only; the sessionId must be a valid UUID.",
+        "Resume a tracked claude session by its sessionId in a terminal (target view, else the first active). User-initiated only; the sessionId must be a valid UUID.",
       triggers: { ko: "세션 이어가기 재개 resume" },
       params: {
         session: { type: "string", description: "claude sessionId (UUID) to resume", required: true },
+        ...VIEW_PARAM,
       },
       returns: "{ ok, session, viewId? }",
       message: (d) => `세션 ${d.session} 을 이어갑니다.`,
@@ -69,7 +79,7 @@ export function registerTerminalCommands(ctx: PluginContext, registry: TerminalR
         if (!UUID_RE.test(sid)) {
           return { ok: false, code: "INVALID_INPUT", message: "invalid sessionId (UUID required)" };
         }
-        const entry = registry.first();
+        const entry = registry.resolve(p.view);
         if (!entry) return { ok: false, code: "NO_TARGET", message: "no active terminal" };
         // 셸 프롬프트에 `claude --resume <uuid>` 입력+실행. UUID 라 shell injection 0. claude 고정.
         entry.renderer.sendInput(`claude --resume ${sid}\r`);
