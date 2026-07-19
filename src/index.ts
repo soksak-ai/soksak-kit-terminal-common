@@ -33,6 +33,7 @@ export {
   type RestoreOutcome,
   ensureSidecar,
   ensureSession,
+  syncMirrorSize,
   orchestrateRestore,
 } from "./restore";
 

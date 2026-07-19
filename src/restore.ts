@@ -107,15 +107,47 @@ export async function ensureSession(
   });
 }
 
+// 사이드카 미러 격자를 pane 폭에 맞춘다(계약 resize op). tee 는 크기를 안 나르고 코어 resize 는
+// 데몬 PTY 만 바꾸므로, 미러는 이 op 로만 폭을 안다 — 리사이즈마다(그리고 rehydrate 직전) 밀어
+// 미러가 실 터미널과 어긋나지 않게 한다. 어긋나면 warm rehydrate 합성이 좁은 pane 에서 격자를
+// 깬다(실측). best-effort: 미러 미구독(NOT_FOUND)·사이드카 미준비는 무해(다음 resize/ensureSession
+// 이 따라잡는다). 같은 폭 반복은 no-op reflow = 멱등. 계약 op 라 4개 엔진 전부에 동일 적용.
+export async function syncMirrorSize(
+  app: PluginApi,
+  paneId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  const pty = app.pty;
+  if (!pty || cols < 1 || rows < 1) return;
+  try {
+    await pty.sidecarRequest({ op: "resize", pane: paneId, cols, rows });
+  } catch {
+    /* 사이드카 미준비 — 다음 resize 가 따라잡는다(무음 무해) */
+  }
+}
+
 // 마운트 시 화면 복원 결정 + inert 페인트(PTY 우회). spawn 전에 부른다: warm 은 uptoSeq 좌표가
 // 필요하고, cold 는 신선 셸 출력이 겹치기 전에 먼저 그려야 한다.
 export async function orchestrateRestore(
   app: PluginApi,
   paneId: string,
   writeInert: (data: string | Uint8Array) => void,
+  opts?: { cols?: number; rows?: number },
 ): Promise<RestoreOutcome> {
   const pty = app.pty;
   if (!pty) return { replay: "none", painted: false };
+  // [warm 재도색 폭 정합 — 미러를 pane 폭에 맞춘 뒤 재수화한다]
+  // warm 화면은 사이드카 미러 그리드를 SGR 런으로 '합성'한 것(바이트 리플레이 아님). 미러는 tee(크기를
+  // 안 나름)만 먹어 제 폭을 모르므로, 계약 resize op 로 밀어줘야 한다 — 코어 resize 는 데몬 PTY 만 바꾸고
+  // 미러엔 전파하지 않는다. 안 밀면 미러가 pane 과 다른 폭에 머물러, 합성 paint(스크롤백은 개행 기반이라
+  // 재감기지만 커서 CUP·행수는 미러 폭 좌표)가 좁은 pane 에서 어긋난다(실측 corruption: 분할 pane).
+  // rehydrate 직전에 미러를 pane 현재 폭으로 resize(엔진 reflow)하면 합성이 그 폭에 정확해진다 → 분할
+  // pane 도 단일 터미널과 똑같이 warm 재부착이 정확(TUI·정확 스크롤백 모두). 계약 op(resize/rehydrate)만
+  // 쓰므로 4개 엔진(alacritty/wezterm/vt100/ghostty)에 멱등 적용 — 엔진 특례 없음. cold(봉인)는 cold_paint
+  // 가 개행 기반(절대위치 없음)이라 폭-강건, resize 불요.
+  const cols = opts?.cols;
+  const rows = opts?.rows;
 
   // warm 후보 판정을 사이드카가 아니라 '데몬'에게 묻는다 — 데몬이 이 pane 의 라이브 세션 존재를
   // 즉답한다(사이드카 무관, 데몬 안 띄움). 세션이 없으면(신선 첫 open·죽은 세션·데몬 미가동)
@@ -130,6 +162,10 @@ export async function orchestrateRestore(
   }
 
   if (warmCandidate) {
+    // rehydrate 전에 미러를 pane 현재 폭으로 맞춘다 — 폭-정합 재도색의 핵심(위 머리 주석). 미러
+    // 미구독(NOT_FOUND)·사이드카 미준비는 무해(best-effort). pane 치수를 모르면(cols/rows 미제공)
+    // 생략한다 — 옛 호출 호환.
+    if (cols && rows) await syncMirrorSize(app, paneId, cols, rows);
     // 라이브 세션 존재 = warm 후보 → 사이드카 rehydrate 로 미러를 그린다. 부팅 직후엔 사이드카가
     // 데몬에 붙는 중일 수 있어 유계 백오프 재시도한다 — 이력 있는 warm 을 사이드카 늦음으로 잃지
     // 않게(부팅 핸드셰이크, 총 수 초 상한·폴링 아님·응답 or 데드라인에 종료). ensureSession 재시도와
@@ -141,8 +177,10 @@ export async function orchestrateRestore(
         const reply = await pty.sidecarRequest({ op: "rehydrate", pane: paneId });
         if (reply.ok === true) {
           const data = reply.data as { paint: string; uptoSeq: number; altActive: boolean };
+          // 미러를 pane 폭에 맞췄으니 합성 paint 는 이 폭에 정확하다 — 그대로 그린다(스크롤백·alt-screen
+          // TUI 모두). 블록복원으로는 표현 못 하는 TUI 화면을 데몬 재접속이 정확히 되살린다. 소비자가
+          // uptoSeq 까지 그렸으니 코어는 그 seq 부터 raw 링을 이어 붙인다(레이스-프리).
           writeInert(b64ToBytes(data.paint));
-          // 소비자가 uptoSeq 까지 그렸다 → 코어는 그 seq 부터 raw 링을 이어 붙인다(레이스-프리).
           return { replay: { fromSeq: data.uptoSeq }, painted: true };
         }
         break; // ok:false — 세션은 있는데 사이드카 미러 없음 → degraded 봉인 폴백.
@@ -174,6 +212,8 @@ async function coldOrFresh(
   try {
     const sealed = await pty.readSealedScreen(paneId);
     if (sealed) {
+      // 봉인 페인트(cold_paint)는 개행 기반(절대위치 없음)이라 어느 폭에서든 재감긴다 — 죽은 세션은
+      // 미러가 없어 resize 할 수 없지만, 폭-강건 직렬화라 좁은 pane 에서도 격자가 안 깨진다.
       writeInert(b64ToBytes(sealed.paintB64));
       // 소실 고지 — 실행 중이던 프로세스는 종료되어 복원되지 않았음을 화면에 찍는다(무음 금지).
       writeInert(`\x1b[2m${t("cold-restore-notice", app.locale())}\x1b[0m\r\n`);
