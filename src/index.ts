@@ -24,3 +24,14 @@ export type {
   PerfSnapshot,
   TerminalRenderer,
 } from "./terminal-renderer";
+
+export { type Dict, makeTranslator } from "./i18n";
+
+export {
+  TERMINAL_CONTRACT,
+  type ReplayControl,
+  type RestoreOutcome,
+  ensureSidecar,
+  ensureSession,
+  orchestrateRestore,
+} from "./restore";
