@@ -12,7 +12,8 @@ import {
   resizeSplit,
 } from "./pane-split-tree";
 
-const DIVIDER_PX = 5;
+const DIVIDER_PX = 1; // 시각 선 폭(레이아웃 공간). 드래그 hit 영역은 절대위치로 따로 넓힌다.
+const DRAG_PAD = 4; // hit 영역이 선 양옆으로 겹치는 폭(레이아웃 불변).
 const MIN_FRAC = 0.05;
 
 export interface PaneSplitHost {
@@ -112,24 +113,29 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
     childEls: HTMLElement[],
   ): HTMLElement => {
     const horizontal = node.dir === "row";
+    // divider = 1px 시각 선(경계 마커)만 flex 공간을 차지한다. 그래서 양옆 pane 이 이 선에 딱 붙고,
+    // 활성 pane border(=pane 가장자리)와 갭이 없다. 드래그 hit 영역은 절대위치로 선 양옆으로 넓혀
+    // 겹치되(레이아웃 불변) 투명하게 둔다.
     const d = document.createElement("div");
-    // 기본은 은은한 1px 경계선 하나만(여기가 경계임을 안다). 마우스 오버·드래그 때 그 위에 폭 있는
-    // 하이라이트 밴드가 뜬다(드래그 가능 구역). hit 영역은 DIVIDER_PX(cursor 로 안내).
-    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};display:flex;align-items:center;justify-content:center;background:transparent;transition:background 0.12s;z-index:1`;
-    const line = document.createElement("div");
-    line.style.cssText = horizontal
-      ? "width:1px;align-self:stretch;background:var(--divider-line-color, rgba(128,128,128,0.35))"
-      : "height:1px;width:100%;background:var(--divider-line-color, rgba(128,128,128,0.35))";
-    d.appendChild(line);
+    const LINE = "var(--divider-line-color, rgba(128,128,128,0.35))";
+    const ACCENT = "var(--divider-hover-color, rgba(96,165,250,0.85))";
+    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;position:relative;background:${LINE};transition:background 0.12s,box-shadow 0.12s;z-index:2`;
+    const hit = document.createElement("div");
+    hit.style.cssText = horizontal
+      ? `position:absolute;top:0;bottom:0;left:-${DRAG_PAD}px;right:-${DRAG_PAD}px;cursor:col-resize`
+      : `position:absolute;left:0;right:0;top:-${DRAG_PAD}px;bottom:-${DRAG_PAD}px;cursor:row-resize`;
+    d.appendChild(hit);
     let dragging = false;
+    // 오버/드래그: 선을 accent 로 밝히고 box-shadow 로 폭 있는 밴드(레이아웃 불변).
     const hl = (on: boolean): void => {
-      d.style.background = on ? "var(--divider-hover-color, rgba(120,120,120,0.28))" : "transparent";
+      d.style.background = on ? ACCENT : LINE;
+      d.style.boxShadow = on ? `0 0 0 1.5px var(--divider-band-color, rgba(96,165,250,0.3))` : "none";
     };
-    d.addEventListener("mouseenter", () => hl(true));
-    d.addEventListener("mouseleave", () => {
+    hit.addEventListener("mouseenter", () => hl(true));
+    hit.addEventListener("mouseleave", () => {
       if (!dragging) hl(false);
     });
-    d.addEventListener("mousedown", (e) => {
+    hit.addEventListener("mousedown", (e) => {
       e.preventDefault();
       dragging = true;
       hl(true);
@@ -182,7 +188,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
         document.body.style.userSelect = prevUserSelect;
         for (const { host } of hosts.values()) host.style.pointerEvents = "";
         dragging = false;
-        hl(d.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 유지, 아니면 투명
+        hl(hit.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 밴드 유지, 아니면 기본 선
         tree = resizeSplit(tree, node.id, next); // 트리 영속(다음 split/close·재렌더가 이 sizes 로)
         for (const { renderer } of hosts.values()) renderer.fit();
       };

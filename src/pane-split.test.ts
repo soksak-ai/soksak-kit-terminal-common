@@ -87,8 +87,8 @@ describe("createPaneSplitHost", () => {
     expect(group.style.flexDirection).toBe("row");
     // 자식 = host, divider, host (3)
     expect(group.children.length).toBe(3);
-    // divider 는 기본 투명(마우스 오버 때만 하이라이트) — 항상 보이는 바 금지.
-    expect((group.children[1] as HTMLElement).style.background).toBe("transparent");
+    // divider 는 기본 1px 경계선(항상 보임) — 오버 때 밴드로 강조. 두꺼운 바 금지.
+    expect((group.children[1] as HTMLElement).style.background).not.toBe("transparent");
     expect(host.active()?.paneId).toBe("p1"); // 새 pane 이 활성
     // 활성 pane 표시 — 2개 이상일 때 정확히 하나(활성)만 accent border 오버레이.
     const overlays = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")];
