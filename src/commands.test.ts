@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { registerTerminalCommands, registerSplitPaneCommand } from "./commands";
+import { registerTerminalCommands, registerPaneCommands } from "./commands";
 import { createTerminalRegistry } from "./terminal-registry";
 import type { TerminalRenderer } from "./terminal-renderer";
 import type { PaneSplitHost } from "./pane-split";
@@ -98,12 +98,12 @@ describe("registerTerminalCommands — view addressing rule", () => {
   });
 });
 
-describe("registerSplitPaneCommand", () => {
-  it("resolves the host, maps dir → row/col, returns the new paneId", async () => {
+describe("registerPaneCommands", () => {
+  it("split-pane resolves the host, maps dir → row/col, returns the new paneId", async () => {
     const split = vi.fn(async (dir: "row" | "col") => `p-${dir}`);
-    const host = { split } as unknown as PaneSplitHost;
+    const host = { split, close: vi.fn(async () => {}) } as unknown as PaneSplitHost;
     const { ctx, registered } = fakeCtx();
-    registerSplitPaneCommand(ctx, (view) => (view === "vX" || !view ? { viewId: "vX", host } : null));
+    registerPaneCommands(ctx, (view) => (view === "vX" || !view ? { viewId: "vX", host } : null));
 
     // dir 기본 = right → row
     expect(await registered.get("split-pane")!.handler({ view: "vX" })).toMatchObject({
@@ -117,10 +117,32 @@ describe("registerSplitPaneCommand", () => {
     expect(split).toHaveBeenLastCalledWith("col");
   });
 
+  it("close-pane closes the given paneId on the resolved host", async () => {
+    const close = vi.fn(async () => {});
+    const host = { split: vi.fn(), close } as unknown as PaneSplitHost;
+    const { ctx, registered } = fakeCtx();
+    registerPaneCommands(ctx, () => ({ viewId: "vX", host }));
+    expect(await registered.get("close-pane")!.handler({ view: "vX", pane: "vX~1" })).toMatchObject({
+      ok: true,
+      viewId: "vX",
+      paneId: "vX~1",
+    });
+    expect(close).toHaveBeenCalledWith("vX~1");
+    // pane 누락 = INVALID_INPUT(닫을 대상 없음)
+    expect(await registered.get("close-pane")!.handler({ view: "vX" })).toMatchObject({
+      ok: false,
+      code: "INVALID_INPUT",
+    });
+  });
+
   it("returns NO_TARGET when no within-tab host resolves", async () => {
     const { ctx, registered } = fakeCtx();
-    registerSplitPaneCommand(ctx, () => null);
+    registerPaneCommands(ctx, () => null);
     expect(await registered.get("split-pane")!.handler({ view: "nope" })).toMatchObject({
+      ok: false,
+      code: "NO_TARGET",
+    });
+    expect(await registered.get("close-pane")!.handler({ view: "nope", pane: "x~1" })).toMatchObject({
       ok: false,
       code: "NO_TARGET",
     });

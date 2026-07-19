@@ -46,7 +46,7 @@ export {
 export { terminalStartedActivity, terminalFinishedActivity } from "./activity";
 
 export { type TerminalRegistry, createTerminalRegistry } from "./terminal-registry";
-export { registerTerminalCommands, registerSplitPaneCommand } from "./commands";
+export { registerTerminalCommands, registerPaneCommands } from "./commands";
 
 export {
   type MountTerminalViewOptions,
