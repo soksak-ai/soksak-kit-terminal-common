@@ -35,3 +35,10 @@ export {
   ensureSession,
   orchestrateRestore,
 } from "./restore";
+
+export {
+  type FocusRequest,
+  type FocusTarget,
+  type FocusCoordinator,
+  createFocusCoordinator,
+} from "./focus-coordinator";
