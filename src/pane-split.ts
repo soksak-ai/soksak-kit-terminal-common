@@ -85,11 +85,17 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
   ): HTMLElement => {
     const horizontal = node.dir === "row";
     const d = document.createElement("div");
-    // 기본은 투명(보이지 않음) — 마우스 오버·드래그 때만 하이라이트한다. hit 영역은 유지(cursor 로 안내).
-    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};background:transparent;transition:background 0.12s;z-index:1`;
+    // 기본은 은은한 1px 경계선 하나만(여기가 경계임을 안다). 마우스 오버·드래그 때 그 위에 폭 있는
+    // 하이라이트 밴드가 뜬다(드래그 가능 구역). hit 영역은 DIVIDER_PX(cursor 로 안내).
+    d.style.cssText = `flex:0 0 ${DIVIDER_PX}px;cursor:${horizontal ? "col-resize" : "row-resize"};display:flex;align-items:center;justify-content:center;background:transparent;transition:background 0.12s;z-index:1`;
+    const line = document.createElement("div");
+    line.style.cssText = horizontal
+      ? "width:1px;align-self:stretch;background:var(--divider-line-color, rgba(128,128,128,0.35))"
+      : "height:1px;width:100%;background:var(--divider-line-color, rgba(128,128,128,0.35))";
+    d.appendChild(line);
     let dragging = false;
     const hl = (on: boolean): void => {
-      d.style.background = on ? "var(--divider-hover-color, rgba(120,120,120,0.5))" : "transparent";
+      d.style.background = on ? "var(--divider-hover-color, rgba(120,120,120,0.28))" : "transparent";
     };
     d.addEventListener("mouseenter", () => hl(true));
     d.addEventListener("mouseleave", () => {
@@ -111,6 +117,16 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       const startA = node.sizes[a];
       const startB = node.sizes[b];
       const next = [...node.sizes];
+      // 드래그 중 터미널 re-fit 을 rAF 로 throttle — 내용(canvas)이 divider 를 실시간으로 따라와야
+      // 이질감이 없다(mouseup 까지 미루면 내용이 stale 해 바만 움직이는 것처럼 보인다).
+      let fitRaf = 0;
+      const scheduleFit = (): void => {
+        if (fitRaf) return;
+        fitRaf = requestAnimationFrame(() => {
+          fitRaf = 0;
+          for (const { renderer } of hosts.values()) renderer.fit();
+        });
+      };
       const onMove = (ev: MouseEvent): void => {
         const cur = horizontal ? ev.clientX : ev.clientY;
         const df = (cur - start) / flexible;
@@ -121,10 +137,12 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
         next[b] = sb;
         childEls[a].style.flex = `${sa} 1 0`;
         childEls[b].style.flex = `${sb} 1 0`;
+        scheduleFit();
       };
       const onUp = (): void => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        if (fitRaf) cancelAnimationFrame(fitRaf);
         dragging = false;
         hl(d.matches(":hover")); // 드래그 끝 — 여전히 위에 있으면 유지, 아니면 투명
         tree = resizeSplit(tree, node.id, next); // 영속(불변)
