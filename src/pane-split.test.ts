@@ -79,6 +79,30 @@ describe("createPaneSplitHost", () => {
     );
   });
 
+  it("hides the retained active-pane indicator when focus moves outside the terminal view", async () => {
+    const { container, opts } = setup();
+    const host = await createPaneSplitHost(opts);
+    await host.split("row");
+    const p0Host = container.querySelectorAll<HTMLElement>("[data-pane-overlay]")[0]
+      .parentElement as HTMLElement;
+    p0Host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(host.active()?.paneId).toBe("p0");
+    expect(p0Host.querySelector<HTMLElement>("[data-pane-overlay]")!.style.borderColor).not.toBe(
+      "transparent",
+    );
+
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+    // 명령 대상은 보존하지만, 실제 포커스가 다른 뷰에 있으므로 선택 테두리는 없어야 한다.
+    expect(host.active()?.paneId).toBe("p0");
+    const visible = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")].filter(
+      (overlay) => overlay.style.borderColor !== "transparent",
+    );
+    expect(visible).toHaveLength(0);
+  });
+
   it("split adds a pane, a flex group, and a divider between them", async () => {
     const { container, opts } = setup();
     const host = await createPaneSplitHost(opts);
@@ -92,10 +116,14 @@ describe("createPaneSplitHost", () => {
     // divider 는 기본 1px 경계선(항상 보임) — 오버 때 밴드로 강조. 두꺼운 바 금지.
     expect((group.children[1] as HTMLElement).style.background).not.toBe("transparent");
     expect(host.active()?.paneId).toBe("p1"); // 새 pane 이 활성
-    // 활성 pane 표시 — 2개 이상일 때 정확히 하나(활성)만 accent border 오버레이.
+    // 아직 이 terminal view가 입력 포커스를 얻지 않았으므로 내부 활성 테두리는 표시하지 않는다.
     const overlays = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")];
-    const active = overlays.filter((o) => o.style.borderColor && o.style.borderColor !== "transparent");
-    expect(active.length).toBe(1);
+    expect(overlays.filter((o) => o.style.borderColor !== "transparent")).toHaveLength(0);
+    // 실제 입력이 새 pane에 진입하면 정확히 그 pane 하나만 표시한다.
+    const p1Host = overlays[1].parentElement as HTMLElement;
+    p1Host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overlays.filter((o) => o.style.borderColor !== "transparent")).toHaveLength(1);
+    expect(overlays[1].style.borderColor).not.toBe("transparent");
   });
 
   it("close removes a pane and collapses back to a single pane", async () => {
