@@ -44,6 +44,8 @@ export interface MountTerminalViewOptions {
 export interface TerminalViewHandle {
   /** 탭내 분할이면 split 호스트(split-pane 명령이 읽는다), 아니면 null. */
   readonly splitHost: PaneSplitHost | null;
+  /** 코어 provider focus/prepareFocusTransfer가 소유하는 실제 뷰 포커스를 전달한다. */
+  setFocused(focused: boolean): void;
   dispose(): void;
 }
 
@@ -58,6 +60,7 @@ export function mountTerminalView(
     single: null as TerminalRenderer | null,
     io: null as { dispose(): void } | null,
     disposed: false,
+    focused: false,
   };
   const fail = (err: unknown): void => {
     if (!state.disposed) setStatus({ code: "error", message: String(err) });
@@ -104,6 +107,7 @@ export function mountTerminalView(
         return;
       }
       state.splitHost = h;
+      h.setFocused(state.focused);
       state.io =
         app.pty?.registerIo?.(viewId, {
           readBuffer: (lines) => h.active()?.renderer.readBuffer(lines) ?? "",
@@ -141,6 +145,10 @@ export function mountTerminalView(
   return {
     get splitHost() {
       return state.splitHost;
+    },
+    setFocused(focused) {
+      state.focused = focused;
+      state.splitHost?.setFocused(focused);
     },
     dispose() {
       state.disposed = true;

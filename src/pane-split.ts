@@ -45,6 +45,8 @@ function scopePaneNodes(root: HTMLElement, paneId: string): void {
 }
 
 export interface PaneSplitHost {
+  /** 코어 view provider 경계가 전달한 실제 뷰 포커스 소유권. active pane 명령 대상과 직교한다. */
+  setFocused(focused: boolean): void;
   /** 활성 pane 을 dir 방향으로 쪼갠다(after=우/하). 새 pane id 반환. */
   split(dir: "row" | "col"): Promise<string>;
   /** pane 을 닫는다. 마지막 pane 이면 onEmpty 를 부른다(뷰 전체 닫힘). */
@@ -81,7 +83,7 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
   let activePane = "";
   // 명령 대상(activePane)과 현재 뷰의 실제 포커스 소유권은 서로 다른 상태다. 전자는 다른
   // 뷰로 이동해도 보존하지만, 활성 테두리는 이 뷰가 입력을 소유할 때만 표시한다.
-  let viewFocused = container.contains(container.ownerDocument.activeElement);
+  let viewFocused = false;
   const emitChange = (): void => onChange?.(tree);
 
   const wrapHost = (paneId: string, r: TerminalRenderer): HTMLElement => {
@@ -126,28 +128,6 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       }
     }
   }
-
-  // capture 단계에서 뷰 경계의 입력 소유권을 먼저 갱신한다. mousedown 은 native/canvas
-  // 터미널처럼 DOM focusin 이 보장되지 않는 렌더러를 포함하고, focusin 은 키보드·명령 기반
-  // 포커스 이동을 포함한다. document 전체를 관찰하되 공개 container 경계만 판정한다.
-  const setViewFocusedFromTarget = (target: EventTarget | null): void => {
-    const next = target instanceof Node && container.contains(target);
-    if (next === viewFocused) return;
-    viewFocused = next;
-    applyActiveStyle();
-  };
-  const ownerDocument = container.ownerDocument;
-  const ownerWindow = ownerDocument.defaultView;
-  const onDocumentMouseDown = (event: MouseEvent): void => setViewFocusedFromTarget(event.target);
-  const onDocumentFocusIn = (event: FocusEvent): void => setViewFocusedFromTarget(event.target);
-  const onWindowBlur = (): void => {
-    if (!viewFocused) return;
-    viewFocused = false;
-    applyActiveStyle();
-  };
-  ownerDocument.addEventListener("mousedown", onDocumentMouseDown, true);
-  ownerDocument.addEventListener("focusin", onDocumentFocusIn, true);
-  ownerWindow?.addEventListener("blur", onWindowBlur);
 
   // 렌더 — 트리를 flex DOM 으로. leaf 는 보존된 host div, split 은 flex 그룹 + 사이 divider.
   const renderNode = (node: PaneTree): HTMLElement => {
@@ -287,6 +267,11 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
 
   let splitSeq = 0;
   return {
+    setFocused(focused) {
+      if (viewFocused === focused) return;
+      viewFocused = focused;
+      applyActiveStyle();
+    },
     async split(dir) {
       const target = hosts.has(activePane) ? activePane : panesOf(tree)[0];
       const paneId = mintPaneId();
@@ -325,9 +310,6 @@ export async function createPaneSplitHost(opts: PaneSplitOptions): Promise<PaneS
       return tree;
     },
     async dispose() {
-      ownerDocument.removeEventListener("mousedown", onDocumentMouseDown, true);
-      ownerDocument.removeEventListener("focusin", onDocumentFocusIn, true);
-      ownerWindow?.removeEventListener("blur", onWindowBlur);
       for (const { renderer } of hosts.values()) await renderer.dispose().catch(() => {});
       hosts.clear();
       container.replaceChildren();

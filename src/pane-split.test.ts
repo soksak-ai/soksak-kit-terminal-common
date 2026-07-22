@@ -61,6 +61,7 @@ describe("createPaneSplitHost", () => {
     const { container, opts } = setup();
     const host = await createPaneSplitHost(opts);
     await host.split("row"); // p1 활성
+    host.setFocused(true);
     const paneHosts = [...container.querySelectorAll<HTMLElement>("[data-pane-overlay]")].map(
       (o) => o.parentElement as HTMLElement,
     );
@@ -79,10 +80,11 @@ describe("createPaneSplitHost", () => {
     );
   });
 
-  it("hides the retained active-pane indicator when focus moves outside the terminal view", async () => {
+  it("hides the retained active-pane indicator when the host transfers focus outside the view", async () => {
     const { container, opts } = setup();
     const host = await createPaneSplitHost(opts);
     await host.split("row");
+    host.setFocused(true);
     const p0Host = container.querySelectorAll<HTMLElement>("[data-pane-overlay]")[0]
       .parentElement as HTMLElement;
     p0Host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -91,9 +93,7 @@ describe("createPaneSplitHost", () => {
       "transparent",
     );
 
-    const outside = document.createElement("button");
-    document.body.appendChild(outside);
-    outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    host.setFocused(false);
 
     // 명령 대상은 보존하지만, 실제 포커스가 다른 뷰에 있으므로 선택 테두리는 없어야 한다.
     expect(host.active()?.paneId).toBe("p0");
@@ -121,6 +121,7 @@ describe("createPaneSplitHost", () => {
     expect(overlays.filter((o) => o.style.borderColor !== "transparent")).toHaveLength(0);
     // 실제 입력이 새 pane에 진입하면 정확히 그 pane 하나만 표시한다.
     const p1Host = overlays[1].parentElement as HTMLElement;
+    host.setFocused(true);
     p1Host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(overlays.filter((o) => o.style.borderColor !== "transparent")).toHaveLength(1);
     expect(overlays[1].style.borderColor).not.toBe("transparent");

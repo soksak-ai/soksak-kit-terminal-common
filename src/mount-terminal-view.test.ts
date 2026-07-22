@@ -44,6 +44,36 @@ function fakeApp() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("mountTerminalView", () => {
+  it("forwards canonical host focus ownership to a within-tab split", async () => {
+    const { app } = fakeApp();
+    const root = document.createElement("div");
+    const handle = mountTerminalView(app, {
+      mountRoot: root,
+      viewId: "v-focus",
+      withinTab: true,
+      focus: createFocusCoordinator(),
+      registry: createTerminalRegistry(),
+      createRenderer: async (paneId) => fakeRenderer(paneId),
+      setStatus: vi.fn(),
+      emptyMessage: "empty",
+    });
+    await vi.waitFor(() => expect(handle.splitHost).not.toBeNull());
+    await handle.splitHost!.split("row");
+    handle.setFocused(true);
+    expect(
+      [...root.querySelectorAll<HTMLElement>("[data-pane-overlay]")].filter(
+        (overlay) => overlay.style.borderColor !== "transparent",
+      ),
+    ).toHaveLength(1);
+    handle.setFocused(false);
+    expect(
+      [...root.querySelectorAll<HTMLElement>("[data-pane-overlay]")].filter(
+        (overlay) => overlay.style.borderColor !== "transparent",
+      ),
+    ).toHaveLength(0);
+    handle.dispose();
+  });
+
   it("single mode: one renderer mounted, IO/focus/registry wired to it", async () => {
     const { app, ios } = fakeApp();
     const mountRoot = document.createElement("div");
