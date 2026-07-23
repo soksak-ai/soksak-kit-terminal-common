@@ -46,6 +46,8 @@ export interface TerminalViewHandle {
   readonly splitHost: PaneSplitHost | null;
   /** 코어 provider focus/prepareFocusTransfer가 소유하는 실제 뷰 포커스를 전달한다. */
   setFocused(focused: boolean): void;
+  /** 뷰의 모든 렌더러 순회(단일·분할 공통) — 뷰 단위 일괄 적용(줌 등)의 유일 경로. */
+  eachRenderer(fn: (renderer: TerminalRenderer) => void): void;
   dispose(): void;
 }
 
@@ -145,6 +147,10 @@ export function mountTerminalView(
   return {
     get splitHost() {
       return state.splitHost;
+    },
+    eachRenderer(fn) {
+      if (state.single) fn(state.single);
+      for (const [, renderer] of state.splitHost?.entries() ?? []) fn(renderer);
     },
     setFocused(focused) {
       state.focused = focused;

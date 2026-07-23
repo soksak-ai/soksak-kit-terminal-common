@@ -217,4 +217,40 @@ describe("mountTerminalView", () => {
     expect(saved.length).toBeGreaterThan(0);
     expect(panesOf(saved.at(-1)!)).toContain("v1~2");
   });
+
+  it("eachRenderer — 단일·분할 공통으로 뷰의 모든 렌더러를 방문한다(뷰 단위 줌의 유일 경로)", async () => {
+    const { app } = fakeApp();
+    const single = mountTerminalView(app, {
+      mountRoot: document.createElement("div"),
+      viewId: "v-zoom-single",
+      withinTab: false,
+      focus: createFocusCoordinator(),
+      registry: createTerminalRegistry(),
+      createRenderer: async (paneId) => fakeRenderer(paneId),
+      setStatus: vi.fn(),
+      emptyMessage: "empty",
+    });
+    await flush();
+    const seenSingle: string[] = [];
+    single.eachRenderer((r) => seenSingle.push((r as { paneId?: string }).paneId ?? "?"));
+    expect(seenSingle).toHaveLength(1);
+    single.dispose();
+
+    const split = mountTerminalView(app, {
+      mountRoot: document.createElement("div"),
+      viewId: "v-zoom-split",
+      withinTab: true,
+      focus: createFocusCoordinator(),
+      registry: createTerminalRegistry(),
+      createRenderer: async (paneId) => fakeRenderer(paneId),
+      setStatus: vi.fn(),
+      emptyMessage: "empty",
+    });
+    await vi.waitFor(() => expect(split.splitHost).not.toBeNull());
+    await split.splitHost!.split("row");
+    const seenSplit: string[] = [];
+    split.eachRenderer(() => seenSplit.push("r"));
+    expect(seenSplit).toHaveLength(2);
+    split.dispose();
+  });
 });
