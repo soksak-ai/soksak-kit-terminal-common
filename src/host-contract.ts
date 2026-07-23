@@ -31,6 +31,13 @@ export interface PluginViewProvider {
     ctx: PluginViewContext,
     request: { signal: AbortSignal },
   ): void;
+  /** 줌 인텐트(코어 PLUGIN-CONTRACT §Zoom, 선택) — 뷰가 자기 관례로 응답(터미널=폰트 스텝).
+   * 콘텐츠만 스케일하고 행 그리드(헤더·툴바 밴드)에는 손대지 않는다(줌 불변식). */
+  zoom?(
+    container: HTMLElement,
+    ctx: PluginViewContext,
+    action: "in" | "out" | "reset",
+  ): void;
 }
 
 export interface ParamSpec {
